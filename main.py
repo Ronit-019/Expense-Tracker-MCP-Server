@@ -11,12 +11,10 @@ DB = os.getenv(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "expenses.db")
 )
 
-
-# ---------------- DATABASE SETUP ----------------
-
-async def init_db():
-    async with aiosqlite.connect(DB) as conn:
-        await conn.execute("""
+def init_db_sync():
+    os.makedirs(os.path.dirname(DB) or ".", exist_ok=True)
+    with sqlite3.connect(DB) as conn:
+        conn.executescript("""
             CREATE TABLE IF NOT EXISTS expenses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -24,23 +22,16 @@ async def init_db():
                 category TEXT NOT NULL,
                 date TEXT NOT NULL,
                 description TEXT
-            )
-        """)
-
-        await conn.execute("""
+            );
             CREATE TABLE IF NOT EXISTS budgets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT NOT NULL,
                 amount REAL NOT NULL,
                 month TEXT NOT NULL
-            )
+            );
         """)
 
-        await conn.commit()
-
-
-async def get_db():
-    return await aiosqlite.connect(DB)
+init_db_sync()  # runs on import, not just under __main__
 
 
 # ---------------- EXPENSE TOOLS ----------------
@@ -454,8 +445,6 @@ Keep the response short and easy to understand.
 # ---------------- SERVER ----------------
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(init_db())
 
     transport = os.getenv("MCP_TRANSPORT", "stdio")
 
