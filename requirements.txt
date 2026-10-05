@@ -1,7 +1,0 @@
-fastmcp
-aiosqlite
-streamlit
-langchain
-langchain-groq
-langchain-mcp-adapters
-python-dotenv

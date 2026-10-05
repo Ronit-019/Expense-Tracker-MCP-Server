@@ -1,24 +1,18 @@
-import asyncio
 import sqlite3
 import os
 import aiosqlite
 from fastmcp import FastMCP
 from enum import Enum
-import json
-import numpy as np
-from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+from groq import AsyncGroq
+
+load_dotenv()
 
 mcp = FastMCP("Expense Tracker")
 
-embedding_model = None
-
-def get_embedding_model():
-    global embedding_model
-
-    if embedding_model is None:
-        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-    return embedding_model
+groq_client = AsyncGroq(
+    api_key=os.getenv("GROQ_API_KEY")
+)
 
 DB = os.getenv(
     "DATABASE_PATH",
@@ -41,8 +35,7 @@ def init_db_sync():
                 amount REAL NOT NULL,
                 category TEXT NOT NULL,
                 date TEXT NOT NULL,
-                description TEXT,
-                embedding TEXT
+                description TEXT
             );
             CREATE TABLE IF NOT EXISTS budgets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,15 +47,6 @@ def init_db_sync():
 
 init_db_sync()  # runs on import, not just under __main__
 
-def add_embedding_column():
-    with sqlite3.connect(DB) as conn:
-        try:
-            conn.execute("ALTER TABLE expenses ADD COLUMN embedding TEXT")
-        except sqlite3.OperationalError:
-            pass
-
-
-add_embedding_column()
 # ---------------- EXPENSE TOOLS ----------------
 
 @mcp.tool()
@@ -89,22 +73,16 @@ async def manage_expenses(
                     "error": "title, amount, category and date are required"
                 }
 
-            model = get_embedding_model()
-
-            text = f"{title}. {category}. {description}"
-            embedding = model.encode(text).tolist()
-
             cursor = await conn.execute(
                 """INSERT INTO expenses
-                (title, amount, category, date, description, embedding)
-                VALUES (?, ?, ?, ?, ?, ?)""",
+                (title, amount, category, date, description)
+                VALUES (?, ?, ?, ?, ?)""",
                 (
                     title,
                     amount,
                     category,
                     date,
-                    description,
-                    json.dumps(embedding)
+                    description
                 )
             )
 
@@ -433,56 +411,7 @@ async def financial_health_score(month: str) -> dict:
         "budget": budget,
         "expense": expense
     }
-
-@mcp.tool()
-async def search_expenses_by_intent(
-    query: str,
-    limit: int = 5
-) -> list:
-    """Find expenses using semantic similarity."""
-
-    model = get_embedding_model()
-
-    query_embedding = model.encode(query)
-
-    async with aiosqlite.connect(DB) as conn:
-        cursor = await conn.execute(
-            """SELECT id, title, amount, category, date,
-                      description, embedding
-               FROM expenses
-               WHERE embedding IS NOT NULL"""
-        )
-
-        rows = await cursor.fetchall()
-
-    results = []
-
-    for row in rows:
-        expense_embedding = np.array(json.loads(row[6]))
-
-        similarity = np.dot(query_embedding, expense_embedding) / (
-            np.linalg.norm(query_embedding) *
-            np.linalg.norm(expense_embedding)
-        )
-
-        results.append({
-            "id": row[0],
-            "title": row[1],
-            "amount": row[2],
-            "category": row[3],
-            "date": row[4],
-            "description": row[5],
-            "similarity": round(float(similarity), 3)
-        })
-
-    results.sort(
-        key=lambda x: x["similarity"],
-        reverse=True
-    )
-
-    return results[:limit]
-
-
+    
 # ---------------- RESOURCES ----------------
 
 @mcp.resource("expense://summary")
