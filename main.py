@@ -3,13 +3,33 @@ import sqlite3
 import os
 import aiosqlite
 from fastmcp import FastMCP
+from enum import Enum
+import json
+import numpy as np
+from sentence_transformers import SentenceTransformer
 
 mcp = FastMCP("Expense Tracker")
+
+embedding_model = None
+
+def get_embedding_model():
+    global embedding_model
+
+    if embedding_model is None:
+        embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+    return embedding_model
 
 DB = os.getenv(
     "DATABASE_PATH",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "expenses.db")
 )
+
+class CRUDAction(str, Enum):
+    CREATE = "CREATE"
+    READ = "READ"
+    UPDATE = "UPDATE"
+    DELETE = "DELETE"
 
 def init_db_sync():
     os.makedirs(os.path.dirname(DB) or ".", exist_ok=True)
@@ -21,7 +41,8 @@ def init_db_sync():
                 amount REAL NOT NULL,
                 category TEXT NOT NULL,
                 date TEXT NOT NULL,
-                description TEXT
+                description TEXT,
+                embedding TEXT
             );
             CREATE TABLE IF NOT EXISTS budgets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,232 +54,276 @@ def init_db_sync():
 
 init_db_sync()  # runs on import, not just under __main__
 
+def add_embedding_column():
+    with sqlite3.connect(DB) as conn:
+        try:
+            conn.execute("ALTER TABLE expenses ADD COLUMN embedding TEXT")
+        except sqlite3.OperationalError:
+            pass
 
+
+add_embedding_column()
 # ---------------- EXPENSE TOOLS ----------------
 
 @mcp.tool()
-async def create_expense(
-    title: str,
-    amount: float,
-    category: str,
-    date: str,
-    description: str = ""
-) -> dict:
-    """Create a new expense."""
-    async with aiosqlite.connect(DB) as conn:
-        cursor = await conn.execute(
-            """INSERT INTO expenses
-               (title, amount, category, date, description)
-               VALUES (?, ?, ?, ?, ?)""",
-            (title, amount, category, date, description)
-        )
-        await conn.commit()
-
-        return {
-            "id": cursor.lastrowid,
-            "message": "Expense created"
-        }
-
-
-@mcp.tool()
-async def list_expenses(category: str = None) -> list:
-    """List expenses, optionally by category."""
-    async with aiosqlite.connect(DB) as conn:
-
-        if category:
-            cursor = await conn.execute(
-                "SELECT * FROM expenses WHERE category = ?",
-                (category,)
-            )
-        else:
-            cursor = await conn.execute(
-                "SELECT * FROM expenses"
-            )
-
-        rows = await cursor.fetchall()
-
-    return [
-        {
-            "id": r[0],
-            "title": r[1],
-            "amount": r[2],
-            "category": r[3],
-            "date": r[4],
-            "description": r[5]
-        }
-        for r in rows
-    ]
-
-
-@mcp.tool()
-async def update_expense(
-    expense_id: int,
+async def manage_expenses(
+    action: CRUDAction,
+    expense_id: int = None,
     title: str = None,
     amount: float = None,
     category: str = None,
     date: str = None,
     description: str = None
-) -> dict:
-    """Update an existing expense."""
+) -> dict | list:
+    """
+    Manage expenses using CREATE, READ, UPDATE, or DELETE actions.
+    """
 
     async with aiosqlite.connect(DB) as conn:
 
-        cursor = await conn.execute(
-            "SELECT * FROM expenses WHERE id = ?",
-            (expense_id,)
-        )
+        # CREATE
+        if action == CRUDAction.CREATE:
 
-        expense = await cursor.fetchone()
+            if not all([title, amount is not None, category, date]):
+                return {
+                    "error": "title, amount, category and date are required"
+                }
 
-        if not expense:
-            return {"error": "Expense not found"}
+            model = get_embedding_model()
 
-        await conn.execute("""
-            UPDATE expenses
-            SET title = ?, amount = ?, category = ?, date = ?, description = ?
-            WHERE id = ?
-        """, (
-            title if title is not None else expense[1],
-            amount if amount is not None else expense[2],
-            category if category is not None else expense[3],
-            date if date is not None else expense[4],
-            description if description is not None else expense[5],
-            expense_id
-        ))
+            text = f"{title}. {category}. {description}"
+            embedding = model.encode(text).tolist()
 
-        await conn.commit()
+            cursor = await conn.execute(
+                """INSERT INTO expenses
+                (title, amount, category, date, description, embedding)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    title,
+                    amount,
+                    category,
+                    date,
+                    description,
+                    json.dumps(embedding)
+                )
+            )
 
-    return {"message": "Expense updated"}
+            await conn.commit()
 
+            return {
+                "id": cursor.lastrowid,
+                "message": "Expense created"
+            }
 
-@mcp.tool()
-async def delete_expense(expense_id: int) -> dict:
-    """Delete an expense."""
+        # READ
+        elif action == CRUDAction.READ:
 
-    async with aiosqlite.connect(DB) as conn:
+            if category:
+                cursor = await conn.execute(
+                    "SELECT * FROM expenses WHERE category = ?",
+                    (category,)
+                )
+            else:
+                cursor = await conn.execute(
+                    "SELECT * FROM expenses"
+                )
 
-        cursor = await conn.execute(
-            "DELETE FROM expenses WHERE id = ?",
-            (expense_id,)
-        )
+            rows = await cursor.fetchall()
 
-        await conn.commit()
+            return [
+                {
+                    "id": r[0],
+                    "title": r[1],
+                    "amount": r[2],
+                    "category": r[3],
+                    "date": r[4],
+                    "description": r[5]
+                }
+                for r in rows
+            ]
 
-    if cursor.rowcount == 0:
-        return {"error": "Expense not found"}
+        # UPDATE
+        elif action == CRUDAction.UPDATE:
 
-    return {"message": "Expense deleted"}
+            if expense_id is None:
+                return {"error": "expense_id is required"}
+
+            cursor = await conn.execute(
+                "SELECT * FROM expenses WHERE id = ?",
+                (expense_id,)
+            )
+
+            expense = await cursor.fetchone()
+
+            if not expense:
+                return {"error": "Expense not found"}
+
+            await conn.execute(
+                """
+                UPDATE expenses
+                SET title = ?, amount = ?, category = ?, date = ?, description = ?
+                WHERE id = ?
+                """,
+                (
+                    title if title is not None else expense[1],
+                    amount if amount is not None else expense[2],
+                    category if category is not None else expense[3],
+                    date if date is not None else expense[4],
+                    description if description is not None else expense[5],
+                    expense_id
+                )
+            )
+
+            await conn.commit()
+
+            return {
+                "id": expense_id,
+                "message": "Expense updated"
+            }
+
+        # DELETE
+        elif action == CRUDAction.DELETE:
+
+            if expense_id is None:
+                return {"error": "expense_id is required"}
+
+            cursor = await conn.execute(
+                "DELETE FROM expenses WHERE id = ?",
+                (expense_id,)
+            )
+
+            await conn.commit()
+
+            if cursor.rowcount == 0:
+                return {"error": "Expense not found"}
+
+            return {
+                "id": expense_id,
+                "message": "Expense deleted"
+            }
 
 
 # ---------------- BUDGET TOOLS ----------------
 
 @mcp.tool()
-async def create_budget(
-    category: str,
-    amount: float,
-    month: str
-) -> dict:
-    """Create a budget for a category and month."""
-
-    async with aiosqlite.connect(DB) as conn:
-
-        cursor = await conn.execute(
-            """INSERT INTO budgets (category, amount, month)
-               VALUES (?, ?, ?)""",
-            (category, amount, month)
-        )
-
-        await conn.commit()
-
-    return {
-        "id": cursor.lastrowid,
-        "message": "Budget created"
-    }
-
-
-@mcp.tool()
-async def list_budgets(month: str = None) -> list:
-    """List budgets, optionally for a month."""
-
-    async with aiosqlite.connect(DB) as conn:
-
-        if month:
-            cursor = await conn.execute(
-                "SELECT * FROM budgets WHERE month = ?",
-                (month,)
-            )
-        else:
-            cursor = await conn.execute(
-                "SELECT * FROM budgets"
-            )
-
-        rows = await cursor.fetchall()
-
-    return [
-        {
-            "id": r[0],
-            "category": r[1],
-            "amount": r[2],
-            "month": r[3]
-        }
-        for r in rows
-    ]
-
-
-@mcp.tool()
-async def update_budget(
-    budget_id: int,
+async def manage_budgets(
+    action: CRUDAction,
+    budget_id: int = None,
     category: str = None,
     amount: float = None,
     month: str = None
-) -> dict:
-    """Update an existing budget."""
+) -> dict | list:
+    """
+    Manage budgets using CREATE, READ, UPDATE, or DELETE actions.
+    """
 
     async with aiosqlite.connect(DB) as conn:
 
-        cursor = await conn.execute(
-            "SELECT * FROM budgets WHERE id = ?",
-            (budget_id,)
-        )
+        # CREATE
+        if action == CRUDAction.CREATE:
 
-        budget = await cursor.fetchone()
+            if not all([category, amount is not None, month]):
+                return {
+                    "error": "category, amount and month are required"
+                }
 
-        if not budget:
-            return {"error": "Budget not found"}
+            cursor = await conn.execute(
+                """
+                INSERT INTO budgets (category, amount, month)
+                VALUES (?, ?, ?)
+                """,
+                (category, amount, month)
+            )
 
-        await conn.execute("""
-            UPDATE budgets
-            SET category = ?, amount = ?, month = ?
-            WHERE id = ?
-        """, (
-            category if category is not None else budget[1],
-            amount if amount is not None else budget[2],
-            month if month is not None else budget[3],
-            budget_id
-        ))
+            await conn.commit()
 
-        await conn.commit()
+            return {
+                "id": cursor.lastrowid,
+                "message": "Budget created"
+            }
 
-    return {"message": "Budget updated"}
+        # READ
+        elif action == CRUDAction.READ:
 
+            if month:
+                cursor = await conn.execute(
+                    "SELECT * FROM budgets WHERE month = ?",
+                    (month,)
+                )
+            else:
+                cursor = await conn.execute(
+                    "SELECT * FROM budgets"
+                )
 
-@mcp.tool()
-async def delete_budget(budget_id: int) -> dict:
-    """Delete a budget."""
+            rows = await cursor.fetchall()
 
-    async with aiosqlite.connect(DB) as conn:
+            return [
+                {
+                    "id": r[0],
+                    "category": r[1],
+                    "amount": r[2],
+                    "month": r[3]
+                }
+                for r in rows
+            ]
 
-        cursor = await conn.execute(
-            "DELETE FROM budgets WHERE id = ?",
-            (budget_id,)
-        )
+        # UPDATE
+        elif action == CRUDAction.UPDATE:
 
-        await conn.commit()
+            if budget_id is None:
+                return {"error": "budget_id is required"}
 
-    if cursor.rowcount == 0:
-        return {"error": "Budget not found"}
+            cursor = await conn.execute(
+                "SELECT * FROM budgets WHERE id = ?",
+                (budget_id,)
+            )
 
-    return {"message": "Budget deleted"}
+            budget = await cursor.fetchone()
+
+            if not budget:
+                return {"error": "Budget not found"}
+
+            await conn.execute(
+                """
+                UPDATE budgets
+                SET category = ?, amount = ?, month = ?
+                WHERE id = ?
+                """,
+                (
+                    category if category is not None else budget[1],
+                    amount if amount is not None else budget[2],
+                    month if month is not None else budget[3],
+                    budget_id
+                )
+            )
+
+            await conn.commit()
+
+            return {
+                "id": budget_id,
+                "message": "Budget updated"
+            }
+
+        # DELETE
+        elif action == CRUDAction.DELETE:
+
+            if budget_id is None:
+                return {"error": "budget_id is required"}
+
+            cursor = await conn.execute(
+                "DELETE FROM budgets WHERE id = ?",
+                (budget_id,)
+            )
+
+            await conn.commit()
+
+            if cursor.rowcount == 0:
+                return {"error": "Budget not found"}
+
+            return {
+                "id": budget_id,
+                "message": "Budget deleted"
+            }
 
 
 # ---------------- ANALYSIS TOOLS ----------------
@@ -368,6 +433,54 @@ async def financial_health_score(month: str) -> dict:
         "budget": budget,
         "expense": expense
     }
+
+@mcp.tool()
+async def search_expenses_by_intent(
+    query: str,
+    limit: int = 5
+) -> list:
+    """Find expenses using semantic similarity."""
+
+    model = get_embedding_model()
+
+    query_embedding = model.encode(query)
+
+    async with aiosqlite.connect(DB) as conn:
+        cursor = await conn.execute(
+            """SELECT id, title, amount, category, date,
+                      description, embedding
+               FROM expenses
+               WHERE embedding IS NOT NULL"""
+        )
+
+        rows = await cursor.fetchall()
+
+    results = []
+
+    for row in rows:
+        expense_embedding = np.array(json.loads(row[6]))
+
+        similarity = np.dot(query_embedding, expense_embedding) / (
+            np.linalg.norm(query_embedding) *
+            np.linalg.norm(expense_embedding)
+        )
+
+        results.append({
+            "id": row[0],
+            "title": row[1],
+            "amount": row[2],
+            "category": row[3],
+            "date": row[4],
+            "description": row[5],
+            "similarity": round(float(similarity), 3)
+        })
+
+    results.sort(
+        key=lambda x: x["similarity"],
+        reverse=True
+    )
+
+    return results[:limit]
 
 
 # ---------------- RESOURCES ----------------
