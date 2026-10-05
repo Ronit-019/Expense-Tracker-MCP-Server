@@ -5,9 +5,9 @@ from fastmcp import FastMCP
 
 mcp = FastMCP("Expense Tracker")
 
-DB = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "expenses.db"
+DB = os.getenv(
+    "DATABASE_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "expenses.db")
 )
 
 
