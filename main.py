@@ -3,6 +3,9 @@ import os
 import aiosqlite
 from fastmcp import FastMCP
 from enum import Enum
+import csv
+import uuid
+from pathlib import Path
 
 mcp = FastMCP("Expense Tracker")
 
@@ -10,6 +13,14 @@ DB = os.getenv(
     "DATABASE_PATH",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "expenses.db")
 )
+
+EXPORT_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "exports"
+)
+
+os.makedirs(EXPORT_DIR, exist_ok=True)
+
 
 class CRUDAction(str, Enum):
     CREATE = "CREATE"
@@ -90,27 +101,118 @@ async def manage_expenses(
 
             if category:
                 cursor = await conn.execute(
-                    "SELECT * FROM expenses WHERE category = ?",
+                    """
+                    SELECT *
+                    FROM expenses
+                    WHERE category = ?
+                    ORDER BY id
+                    """,
                     (category,)
                 )
             else:
                 cursor = await conn.execute(
-                    "SELECT * FROM expenses"
+                    """
+                    SELECT *
+                    FROM expenses
+                    ORDER BY id
+                    """
                 )
 
             rows = await cursor.fetchall()
 
-            return [
-                {
-                    "id": r[0],
-                    "title": r[1],
-                    "amount": r[2],
-                    "category": r[3],
-                    "date": r[4],
-                    "description": r[5]
-                }
+            # -----------------------------------------
+            # NORMAL RESPONSE: 50 OR FEWER RECORDS
+            # -----------------------------------------
+
+            if len(rows) <= 50:
+
+                return [
+                    {
+                        "id": r[0],
+                        "title": r[1],
+                        "amount": r[2],
+                        "category": r[3],
+                        "date": r[4],
+                        "description": r[5]
+                    }
+                    for r in rows
+                ]
+
+            # -----------------------------------------
+            # LARGE RESPONSE: MORE THAN 50 RECORDS
+            # -----------------------------------------
+
+            filename = f"expenses_{uuid.uuid4().hex[:8]}.csv"
+
+            filepath = os.path.join(
+                EXPORT_DIR,
+                filename
+            )
+
+            total_amount = sum(
+                float(r[2])
                 for r in rows
-            ]
+            )
+
+            category_totals = {}
+
+            for r in rows:
+                category_name = r[3]
+
+                category_totals[category_name] = (
+                    category_totals.get(category_name, 0)
+                    + float(r[2])
+                )
+
+            largest_category = (
+                max(
+                    category_totals,
+                    key=category_totals.get
+                )
+                if category_totals
+                else None
+            )
+
+            # -----------------------------------------
+            # CREATE CSV
+            # -----------------------------------------
+
+            with open(
+                filepath,
+                "w",
+                newline="",
+                encoding="utf-8"
+            ) as file:
+
+                writer = csv.writer(file)
+
+                writer.writerow([
+                    "id",
+                    "title",
+                    "amount",
+                    "category",
+                    "date",
+                    "description"
+                ])
+
+                writer.writerows(rows)
+
+            # -----------------------------------------
+            # RETURN COMPACT RESPONSE
+            # -----------------------------------------
+
+            return {
+                "export_required": True,
+                "file_uri": f"expense://exports/{filename}",
+                "filename": filename,
+                "record_count": len(rows),
+                "summary": (
+                    f"{len(rows)} expenses found totaling "
+                    f"{total_amount:.2f}.\n"
+                    f"Largest category: {largest_category} "
+                    f"({category_totals[largest_category]:.2f})."
+                )
+            }
 
         # UPDATE
         elif action == CRUDAction.UPDATE:
@@ -475,6 +577,74 @@ and give simple practical advice for improving my budget.
 Keep the response short and easy to understand.
 """
 
+@mcp.tool()
+async def seed_test_expenses(count: int = 65) -> dict:
+    """
+    Create test expenses for testing large result sets.
+    Temporary development/testing tool.
+    """
+
+    if count < 1 or count > 100:
+        return {
+            "error": "count must be between 1 and 100"
+        }
+
+    categories = [
+        "Food",
+        "Travel",
+        "Shopping",
+        "Bills",
+        "Entertainment",
+        "Health",
+        "Education",
+    ]
+
+    titles = [
+        "Grocery Store",
+        "Uber Ride",
+        "Restaurant",
+        "Movie",
+        "Electricity Bill",
+        "Online Shopping",
+        "Pharmacy",
+        "Coffee",
+        "Hotel",
+        "Fuel",
+    ]
+
+    async with aiosqlite.connect(DB) as conn:
+
+        for i in range(count):
+
+            title = titles[i % len(titles)]
+            category = categories[i % len(categories)]
+
+            amount = 100 + ((i * 137) % 2500)
+
+            day = (i % 28) + 1
+            date = f"2026-10-{day:02d}"
+
+            await conn.execute(
+                """
+                INSERT INTO expenses
+                (title, amount, category, date, description)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    title,
+                    amount,
+                    category,
+                    date,
+                    f"Test expense {i + 1}"
+                )
+            )
+
+        await conn.commit()
+
+    return {
+        "message": "Test expenses created successfully",
+        "count": count
+    }
 
 # ---------------- SERVER ----------------
 
