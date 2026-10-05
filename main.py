@@ -3,16 +3,8 @@ import os
 import aiosqlite
 from fastmcp import FastMCP
 from enum import Enum
-from dotenv import load_dotenv
-from groq import AsyncGroq
-
-load_dotenv()
 
 mcp = FastMCP("Expense Tracker")
-
-groq_client = AsyncGroq(
-    api_key=os.getenv("GROQ_API_KEY")
-)
 
 DB = os.getenv(
     "DATABASE_PATH",
