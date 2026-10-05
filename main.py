@@ -505,7 +505,64 @@ async def financial_health_score(month: str) -> dict:
         "budget": budget,
         "expense": expense
     }
-    
+
+@mcp.tool()
+async def seed_test_expenses(count: int = 65) -> dict:
+    """Create test expenses for testing large list payloads."""
+
+    categories = [
+        "Food",
+        "Travel",
+        "Shopping",
+        "Bills",
+        "Entertainment",
+        "Health",
+        "Education",
+    ]
+
+    titles = [
+        "Grocery Store",
+        "Uber Ride",
+        "Restaurant",
+        "Movie",
+        "Electricity Bill",
+        "Amazon Purchase",
+        "Pharmacy",
+        "Coffee",
+        "Hotel",
+        "Fuel",
+    ]
+
+    async with aiosqlite.connect(DB) as conn:
+
+        for i in range(count):
+            title = titles[i % len(titles)]
+            category = categories[i % len(categories)]
+            amount = 100 + ((i * 137) % 2500)
+
+            date = f"2026-10-{(i % 28) + 1:02d}"
+
+            await conn.execute(
+                """
+                INSERT INTO expenses
+                (title, amount, category, date, description)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    title,
+                    amount,
+                    category,
+                    date,
+                    f"Test expense {i + 1}"
+                )
+            )
+
+        await conn.commit()
+
+    return {
+        "message": f"{count} test expenses created",
+        "total_added": count
+    }   
 # ---------------- RESOURCES ----------------
 
 @mcp.resource("expense://summary")
