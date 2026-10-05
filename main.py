@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 import os
 import aiosqlite
@@ -453,17 +454,16 @@ Keep the response short and easy to understand.
 # ---------------- SERVER ----------------
 
 if __name__ == "__main__":
+    import asyncio
+    asyncio.run(init_db())
 
     transport = os.getenv("MCP_TRANSPORT", "stdio")
 
     if transport == "streamable-http":
-
         mcp.run(
             transport="streamable-http",
             host="0.0.0.0",
             port=int(os.getenv("PORT", 8000))
         )
-
     else:
-
         mcp.run()
