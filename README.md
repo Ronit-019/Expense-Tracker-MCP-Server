@@ -1,5 +1,7 @@
 # Expense Tracker MCP Server
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/ronit-019-expense-tracker-mcp-server-1j8nio?v=5ca349b20275f3c87de29ec57daa9bb2)](https://m8ven.ai/mcp/ronit-019-expense-tracker-mcp-server-1j8nio?s=readme)
+
 A simple personal Expense Tracker built as an **MCP (Model Context Protocol) server** using **FastMCP** and **SQLite**.
 
 The server allows an MCP client such as Claude to manage expenses and budgets using natural language through MCP tools, access financial information through resources, and use predefined financial-analysis prompts.
