@@ -66,6 +66,10 @@ SQLite
 
 The image understanding is handled by the MCP client/LLM. The server is responsible for receiving the structured expense information and storing it.
 
+### Tool Annotations:
+
+- Explicit read-only, destructive, idempotency, and open-world hints for MCP tools.
+
 ---
 
 ## Large Expense List Optimization
@@ -608,19 +612,15 @@ It intentionally avoids unnecessary production-level abstractions.
 
 ---
 
-## Future Improvements
+## Testing
 
-Possible future improvements include:
+Run the automated tests with:
 
-- PostgreSQL support
-- Authentication for the remote server
-- More financial analysis tools
-- Date-range filtering
-- Monthly spending summaries
-- Recurring expenses and budgets
-- Better financial insights
-- Persistent remote database storage
-- More advanced receipt processing
+```bash
+pytest -v
+```
+
+The test suite covers expense CRUD operations, required-field validation, and the large-result CSV export threshold.
 
 ---
 
