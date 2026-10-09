@@ -626,4 +626,5 @@ The test suite covers expense CRUD operations, required-field validation, and th
 
 ## License
 
-MIT
+This project is licensed under the MIT License.
+See the [LICENSE](LICENSE) file for details.
