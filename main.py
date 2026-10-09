@@ -6,6 +6,7 @@ from enum import Enum
 import csv
 import uuid
 from pathlib import Path
+from mcp.types import ToolAnnotations
 
 mcp = FastMCP("Expense Tracker")
 
@@ -52,7 +53,14 @@ init_db_sync()  # runs on import, not just under __main__
 
 # ---------------- EXPENSE TOOLS ----------------
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
 async def manage_expenses(
     action: CRUDAction,
     expense_id: int = None,
@@ -277,7 +285,14 @@ async def manage_expenses(
 
 # ---------------- BUDGET TOOLS ----------------
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
 async def manage_budgets(
     action: CRUDAction,
     budget_id: int = None,
@@ -400,7 +415,14 @@ async def manage_budgets(
 
 # ---------------- ANALYSIS TOOLS ----------------
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 async def budget_vs_expense(
     month: str,
     category: str = None
@@ -455,7 +477,14 @@ async def budget_vs_expense(
     }
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+)
 async def financial_health_score(month: str) -> dict:
     """Calculate a simple financial health score."""
 
@@ -506,10 +535,19 @@ async def financial_health_score(month: str) -> dict:
         "expense": expense
     }
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+)
 async def seed_test_expenses(count: int = 65) -> dict:
     """Create test expenses for testing large list payloads."""
-
+    if count < 1 or count > 100:
+        return {"error": "count must be between 1 and 100"}
+    
     categories = [
         "Food",
         "Travel",
@@ -561,7 +599,7 @@ async def seed_test_expenses(count: int = 65) -> dict:
 
     return {
         "message": f"{count} test expenses created",
-        "total_added": count
+        "count": count
     }   
 # ---------------- RESOURCES ----------------
 
@@ -633,75 +671,6 @@ and give simple practical advice for improving my budget.
 
 Keep the response short and easy to understand.
 """
-
-@mcp.tool()
-async def seed_test_expenses(count: int = 65) -> dict:
-    """
-    Create test expenses for testing large result sets.
-    Temporary development/testing tool.
-    """
-
-    if count < 1 or count > 100:
-        return {
-            "error": "count must be between 1 and 100"
-        }
-
-    categories = [
-        "Food",
-        "Travel",
-        "Shopping",
-        "Bills",
-        "Entertainment",
-        "Health",
-        "Education",
-    ]
-
-    titles = [
-        "Grocery Store",
-        "Uber Ride",
-        "Restaurant",
-        "Movie",
-        "Electricity Bill",
-        "Online Shopping",
-        "Pharmacy",
-        "Coffee",
-        "Hotel",
-        "Fuel",
-    ]
-
-    async with aiosqlite.connect(DB) as conn:
-
-        for i in range(count):
-
-            title = titles[i % len(titles)]
-            category = categories[i % len(categories)]
-
-            amount = 100 + ((i * 137) % 2500)
-
-            day = (i % 28) + 1
-            date = f"2026-10-{day:02d}"
-
-            await conn.execute(
-                """
-                INSERT INTO expenses
-                (title, amount, category, date, description)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    title,
-                    amount,
-                    category,
-                    date,
-                    f"Test expense {i + 1}"
-                )
-            )
-
-        await conn.commit()
-
-    return {
-        "message": "Test expenses created successfully",
-        "count": count
-    }
 
 # ---------------- SERVER ----------------
 
